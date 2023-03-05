@@ -2,6 +2,8 @@ import hydra
 from omegaconf import DictConfig
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import numpy as np
+import h5py
+import pandas as pd
 from scipy.special import expit
 
 from conf.CONFIG_CHOICE import CONFIG_NAME, CONFIG_PATH
@@ -34,25 +36,26 @@ def index(exp_dict: DictConfig):
     tokenizer = AutoTokenizer.from_pretrained(MODEL)
 
     # PT
-    batch_size = 100
+    batch_size = 10
     num_passages = len(passages)
     result = np.empty(shape=(0, 19))
     
     num_batches = num_passages // batch_size + 1 if num_passages % batch_size > 0 else num_passages // batch_size
     
-    
+    classification_model = AutoModelForSequenceClassification.from_pretrained(MODEL)
     for i in range(num_batches):
         print(f"indexing batch {i}")
         start = i * batch_size
         end = (i +1) * batch_size
 
         tokens = tokenizer(passages[start:end], truncation=True, max_length=512, padding='max_length', return_tensors='pt')
-        model = AutoModelForSequenceClassification.from_pretrained(MODEL)
-        output = model(**tokens)
+        output = classification_model(**tokens)
         batch_result = output[0].detach().numpy()
         result = np.vstack([result, batch_result])
         print(result.shape)
         
+    classifications = pd.DataFrame(result)
+    classifications.to_csv("full_collection_classifications.csv")
     print("DONE")
 
 
