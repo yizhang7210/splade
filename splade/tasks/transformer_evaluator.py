@@ -97,15 +97,29 @@ class SparseRetrieval(Evaluator):
                           query_values: np.ndarray,
                           threshold: float,
                           size_collection: int):
+
+        # TODO: We should be able to immediatley eliminate passages here.
         scores = np.zeros(size_collection, dtype=np.float32)  # initialize array with size = size of collection
         n = len(indexes_to_retrieve)
+
+        # indexes_to_retrieve is the BOW representation of the query
+        # n is the number of words in that BOW representation
         for _idx in range(n):
+            # local_idx is a word id in the vocabulary space
             local_idx = indexes_to_retrieve[_idx]  # which posting list to search
+
+            # This is the "relevance score" of the query for this word
             query_float = query_values[_idx]  # what is the value of the query for this posting list
+
+            # retrieved_indexes contains the passage IDs related to this word (local_idx)
             retrieved_indexes = inverted_index_ids[local_idx]  # get indexes from posting list
+
+            # retrieved_floats contains the "relevance score" of the passage_id for this word (local_idx)
             retrieved_floats = inverted_index_floats[local_idx]  # get values from posting list
+
             for j in numba.prange(len(retrieved_indexes)):
                 scores[retrieved_indexes[j]] += query_float * retrieved_floats[j]
+
         filtered_indexes = np.argwhere(scores > threshold)[:, 0]  # ideally we should have a threshold to filter
         # unused documents => this should be tuned, currently it is set to 0
         return filtered_indexes, -scores[filtered_indexes]
