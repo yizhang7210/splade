@@ -14,6 +14,11 @@ from ..losses.regularization import L0
 from ..tasks.base.evaluator import Evaluator
 from ..utils.utils import makedir, to_list
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
+from scipy.special import expit
+
+MODEL = f"cardiffnlp/tweet-topic-21-multi"
+TOPIC_TOKENIZER = AutoTokenizer.from_pretrained(MODEL)
+TOPIC_MODEL = AutoModelForSequenceClassification.from_pretrained(MODEL)
 
 
 class SparseIndexing(Evaluator):
@@ -91,27 +96,29 @@ class SparseRetrieval(Evaluator):
         return filtered_indexes, scores
 
     @staticmethod
-    @numba.njit(nogil=True, parallel=True, cache=True)
+    # @numba.njit(nogil=True, parallel=True, cache=True)
     def numba_score_float(inverted_index_ids: numba.typed.Dict,
                           inverted_index_floats: numba.typed.Dict,
                           indexes_to_retrieve: np.ndarray,
                           query_values: np.ndarray,
                           threshold: float,
-                          size_collection: int):
+                          size_collection: int,
+                          query_string: str,
+                          topic_index: np.ndarray):
 
         # TODO: We should be able to immediatley eliminate passages here.
         scores = np.zeros(size_collection, dtype=np.float32)  # initialize array with size = size of collection
         n = len(indexes_to_retrieve)
         
-        
         # Get the topic of the query
-        tokens = self.topic_tokenizer(self.query_string, truncation=True, max_length=512, padding='max_length', return_tensors='pt')
-        output = self.topic_model(**tokens)
+        tokens = TOPIC_TOKENIZER(query_string, truncation=True, max_length=512, padding='max_length', return_tensors='pt')
+        output = TOPIC_MODEL(**tokens)
 
-        topic_scores = output[0][0].detach().numpy()
-        topic_scores = expit(topic_scores)
+        q_topic_scores = output[0][0].detach().numpy()
+        q_topic_scores = expit(q_topic_scores)
         
-        print("--------------------", topic_scores)
+        topic_threshold = 0.1
+        q_topic_scores_trimmed = np.array([q if q>topic_threshold else 0 for q in q_topic_scores])
 
         # indexes_to_retrieve is the BOW representation of the query
         # n is the number of words in that BOW representation
@@ -129,7 +136,12 @@ class SparseRetrieval(Evaluator):
             retrieved_floats = inverted_index_floats[local_idx]  # get values from posting list
 
             for j in numba.prange(len(retrieved_indexes)):
-                scores[retrieved_indexes[j]] += query_float * retrieved_floats[j]
+                passage_id = retrieved_indexes[j]
+
+                # Consider the topic of this query + this passage
+                topic_overlap = np.dot(topic_index[passage_id], q_topic_scores_trimmed)
+
+                scores[passage_id] += query_float * retrieved_floats[j] * topic_overlap
 
         filtered_indexes = np.argwhere(scores > threshold)[:, 0]  # ideally we should have a threshold to filter
         # unused documents => this should be tuned, currently it is set to 0
@@ -164,12 +176,8 @@ class SparseRetrieval(Evaluator):
         self.compute_stats = compute_stats
         if self.compute_stats:
             self.l0 = L0()
-            
-        MODEL = f"cardiffnlp/tweet-topic-21-multi"
-        self.topic_tokenizer = AutoTokenizer.from_pretrained(MODEL)
-        self.topic_model = AutoModelForSequenceClassification.from_pretrained(MODEL)
 
-    def retrieve(self, q_loader, top_k, name=None, return_d=False, id_dict=False, threshold=0):
+    def retrieve(self, q_loader, top_k, name=None, return_d=False, id_dict=False, threshold=0, topic_index={}):
         makedir(self.out_dir)
         if self.compute_stats:
             makedir(os.path.join(self.out_dir, "stats"))
@@ -193,14 +201,14 @@ class SparseRetrieval(Evaluator):
                 
                 # Topic classification
                 q_string = q_loader.dataset[t][1]
-                print(q_string)
-                self.query_string = q_string
                 filtered_indexes, scores = self.numba_score_float(self.numba_index_doc_ids,
                                                                   self.numba_index_doc_values,
                                                                   col.cpu().numpy(),
                                                                   values.cpu().numpy().astype(np.float32),
                                                                   threshold=threshold,
-                                                                  size_collection=self.sparse_index.nb_docs())
+                                                                  size_collection=self.sparse_index.nb_docs(),
+                                                                  query_string=q_string,
+                                                                  topic_index=topic_index)
                 # threshold set to 0 by default, could be better
                 filtered_indexes, scores = self.select_topk(filtered_indexes, scores, k=top_k)
                 for id_, sc in zip(filtered_indexes, scores):
