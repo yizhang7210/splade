@@ -13,6 +13,7 @@ from ..indexing.inverted_index import IndexDictOfArray
 from ..losses.regularization import L0
 from ..tasks.base.evaluator import Evaluator
 from ..utils.utils import makedir, to_list
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 
 class SparseIndexing(Evaluator):
@@ -101,6 +102,16 @@ class SparseRetrieval(Evaluator):
         # TODO: We should be able to immediatley eliminate passages here.
         scores = np.zeros(size_collection, dtype=np.float32)  # initialize array with size = size of collection
         n = len(indexes_to_retrieve)
+        
+        
+        # Get the topic of the query
+        tokens = self.topic_tokenizer(self.query_string, truncation=True, max_length=512, padding='max_length', return_tensors='pt')
+        output = self.topic_model(**tokens)
+
+        topic_scores = output[0][0].detach().numpy()
+        topic_scores = expit(topic_scores)
+        
+        print("--------------------", topic_scores)
 
         # indexes_to_retrieve is the BOW representation of the query
         # n is the number of words in that BOW representation
@@ -153,6 +164,10 @@ class SparseRetrieval(Evaluator):
         self.compute_stats = compute_stats
         if self.compute_stats:
             self.l0 = L0()
+            
+        MODEL = f"cardiffnlp/tweet-topic-21-multi"
+        self.topic_tokenizer = AutoTokenizer.from_pretrained(MODEL)
+        self.topic_model = AutoModelForSequenceClassification.from_pretrained(MODEL)
 
     def retrieve(self, q_loader, top_k, name=None, return_d=False, id_dict=False, threshold=0):
         makedir(self.out_dir)
@@ -175,6 +190,11 @@ class SparseRetrieval(Evaluator):
                 # TODO: batched version for retrieval
                 row, col = torch.nonzero(query, as_tuple=True)
                 values = query[to_list(row), to_list(col)]
+                
+                # Topic classification
+                q_string = q_loader.dataset[t][1]
+                print(q_string)
+                self.query_string = q_string
                 filtered_indexes, scores = self.numba_score_float(self.numba_index_doc_ids,
                                                                   self.numba_index_doc_values,
                                                                   col.cpu().numpy(),
