@@ -21,7 +21,7 @@ import pandas as pd
 MODEL = f"cardiffnlp/tweet-topic-21-multi"
 TOPIC_TOKENIZER = AutoTokenizer.from_pretrained(MODEL)
 TOPIC_MODEL = AutoModelForSequenceClassification.from_pretrained(MODEL)
-QUERY_TOPIC_THRESHOLD = 0.1
+QUERY_TOPIC_THRESHOLD = 0
 
 from numpy.linalg import norm
 
@@ -117,6 +117,8 @@ class SparseRetrieval(Evaluator):
         scores = np.zeros(size_collection, dtype=np.float32)  # initialize array with size = size of collection
         n = len(indexes_to_retrieve)
 
+        irrelevant_passages = set()
+
         # indexes_to_retrieve is the BOW representation of the query
         # n is the number of words in that BOW representation
         for _idx in range(n):
@@ -137,13 +139,16 @@ class SparseRetrieval(Evaluator):
 
                 # Consider the topic of this query + this passage
                 if filter_by_topic:
-                    topic_overlap = np.dot(topic_index[passage_id], query_topic_score)
-                    # topic_overlap = cos_sim(topic_index[passage_id], query_topic_score)
+                    if passage_id not in irrelevant_passages:
+                        topic_overlap = np.dot(topic_index[passage_id], query_topic_score)
+                        # topic_overlap = cos_sim(topic_index[passage_id], query_topic_score)
+                        if topic_overlap == 0:
+                            scores[passage_id] = 0
+                            irrelevant_passages.add(passage_id)
+                        else:
+                            scores[passage_id] += query_float * retrieved_floats[j] * topic_overlap
                 else:
-                    topic_overlap = 1
-
-                if topic_overlap > 0:
-                    scores[passage_id] += query_float * retrieved_floats[j] * topic_overlap
+                    scores[passage_id] += query_float * retrieved_floats[j]
 
         filtered_indexes = np.argwhere(scores > threshold)[:, 0]  # ideally we should have a threshold to filter
         # unused documents => this should be tuned, currently it is set to 0

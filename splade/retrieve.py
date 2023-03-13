@@ -14,7 +14,7 @@ import pandas as pd
 import time
 
 FILTER_BY_TOPIC = True
-PASSAGE_TOPIC_THRESHOLD = 0.2
+PASSAGE_TOPIC_THRESHOLD = 0
 
 @hydra.main(config_path=CONFIG_PATH, config_name=CONFIG_NAME)
 def retrieve_evaluate(exp_dict: DictConfig):
