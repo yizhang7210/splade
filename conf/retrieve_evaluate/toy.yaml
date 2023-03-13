@@ -5,6 +5,6 @@ data:
   EVAL_QREL_PATH: [data/toy_data/qrel/qrel.json]
 
 config:
-  top_k: 5
-  threshold: 0.4
+  top_k: 20
+  threshold: 0
   eval_metric: [[mrr_10, recall]]

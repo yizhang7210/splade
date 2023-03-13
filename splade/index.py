@@ -14,6 +14,9 @@ from .tasks.transformer_evaluator import SparseIndexing
 from .utils.utils import get_initialize_config
 
 
+INDEX_PASSAGES = False
+INDEX_QUERIES = True
+
 @hydra.main(config_path=CONFIG_PATH, config_name=CONFIG_NAME)
 def index(exp_dict: DictConfig):
     exp_dict, config, init_dict, model_training_config = get_initialize_config(exp_dict)
@@ -26,10 +29,10 @@ def index(exp_dict: DictConfig):
                                     batch_size=config["index_retrieve_batch_size"],
                                     shuffle=False, num_workers=10, prefetch_factor=4)
     evaluator = SparseIndexing(model=model, config=config, compute_stats=True)
-    evaluator.index(d_loader)
+    # evaluator.index(d_loader)
     
     # Topic indexing of all the passages too
-    if False:
+    if INDEX_PASSAGES:
         passages = []
         for i in range(len(d_collection)):
             passages.append(d_collection[i][1])
@@ -46,7 +49,7 @@ def index(exp_dict: DictConfig):
 
         classification_model = AutoModelForSequenceClassification.from_pretrained(MODEL)
         for i in range(num_batches):
-            print(f"indexing batch {i}")
+            print(f"indexing batch {i} of passage")
             start = i * batch_size
             end = (i +1) * batch_size
 
@@ -59,7 +62,43 @@ def index(exp_dict: DictConfig):
         classifications = pd.DataFrame(result)
         classifications.to_csv("full_collection_classifications.csv")
         print("DONE")
+ 
 
+    if INDEX_QUERIES:
+        q_collection = CollectionDatasetPreLoad(data_dir=exp_dict["data"]["Q_COLLECTION_PATH"][0], id_style="row_id")
+        q_loader = CollectionDataLoader(dataset=q_collection, tokenizer_type=model_training_config["tokenizer_type"],
+                                        max_length=model_training_config["max_length"], batch_size=1,
+                                        shuffle=False, num_workers=1)
+        
+        queries = []
+        for i in range(len(q_collection)):
+            queries.append(q_collection[i][1])
+
+        MODEL = f"cardiffnlp/tweet-topic-21-multi"
+        tokenizer = AutoTokenizer.from_pretrained(MODEL)
+
+        # PT
+        batch_size = 10
+        num_queries = len(queries)
+        result = np.empty(shape=(0, 19))
+
+        num_batches = num_queries // batch_size + 1 if num_queries % batch_size > 0 else num_queries // batch_size
+
+        classification_model = AutoModelForSequenceClassification.from_pretrained(MODEL)
+        for i in range(num_batches):
+            print(f"indexing batch {i} of query")
+            start = i * batch_size
+            end = (i +1) * batch_size
+
+            tokens = tokenizer(queries[start:end], truncation=True, max_length=512, padding='max_length', return_tensors='pt')
+            output = classification_model(**tokens)
+            batch_result = output[0].detach().numpy()
+            result = np.vstack([result, batch_result])
+            print(result.shape)
+
+        classifications = pd.DataFrame(result)
+        classifications.to_csv("query_classifications.csv")
+        print("DONE")
 
 if __name__ == "__main__":
     index()

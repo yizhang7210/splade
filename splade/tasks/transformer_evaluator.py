@@ -15,11 +15,18 @@ from ..tasks.base.evaluator import Evaluator
 from ..utils.utils import makedir, to_list
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from scipy.special import expit
+import h5py
+import pandas as pd
 
 MODEL = f"cardiffnlp/tweet-topic-21-multi"
 TOPIC_TOKENIZER = AutoTokenizer.from_pretrained(MODEL)
 TOPIC_MODEL = AutoModelForSequenceClassification.from_pretrained(MODEL)
+QUERY_TOPIC_THRESHOLD = 0.1
 
+from numpy.linalg import norm
+
+def cos_sim(a, b):
+    return np.dot(a, b)/(norm(a)*norm(b))
 
 class SparseIndexing(Evaluator):
     """sparse indexing
@@ -103,22 +110,12 @@ class SparseRetrieval(Evaluator):
                           query_values: np.ndarray,
                           threshold: float,
                           size_collection: int,
-                          query_string: str,
-                          topic_index: np.ndarray):
+                          query_topic_score: np.ndarray,
+                          topic_index: np.ndarray,
+                          filter_by_topic: bool):
 
-        # TODO: We should be able to immediatley eliminate passages here.
         scores = np.zeros(size_collection, dtype=np.float32)  # initialize array with size = size of collection
         n = len(indexes_to_retrieve)
-        
-        # Get the topic of the query
-        tokens = TOPIC_TOKENIZER(query_string, truncation=True, max_length=512, padding='max_length', return_tensors='pt')
-        output = TOPIC_MODEL(**tokens)
-
-        q_topic_scores = output[0][0].detach().numpy()
-        q_topic_scores = expit(q_topic_scores)
-        
-        topic_threshold = 0.1
-        q_topic_scores_trimmed = np.array([q if q>topic_threshold else 0 for q in q_topic_scores])
 
         # indexes_to_retrieve is the BOW representation of the query
         # n is the number of words in that BOW representation
@@ -139,9 +136,14 @@ class SparseRetrieval(Evaluator):
                 passage_id = retrieved_indexes[j]
 
                 # Consider the topic of this query + this passage
-                topic_overlap = np.dot(topic_index[passage_id], q_topic_scores_trimmed)
+                if filter_by_topic:
+                    topic_overlap = np.dot(topic_index[passage_id], query_topic_score)
+                    # topic_overlap = cos_sim(topic_index[passage_id], query_topic_score)
+                else:
+                    topic_overlap = 1
 
-                scores[passage_id] += query_float * retrieved_floats[j] * topic_overlap
+                if topic_overlap > 0:
+                    scores[passage_id] += query_float * retrieved_floats[j] * topic_overlap
 
         filtered_indexes = np.argwhere(scores > threshold)[:, 0]  # ideally we should have a threshold to filter
         # unused documents => this should be tuned, currently it is set to 0
@@ -177,13 +179,21 @@ class SparseRetrieval(Evaluator):
         if self.compute_stats:
             self.l0 = L0()
 
-    def retrieve(self, q_loader, top_k, name=None, return_d=False, id_dict=False, threshold=0, topic_index={}):
+    def retrieve(self, q_loader, top_k, name=None, return_d=False, id_dict=False, threshold=0, topic_index={}, filter_by_topic=False):
         makedir(self.out_dir)
         if self.compute_stats:
             makedir(os.path.join(self.out_dir, "stats"))
         res = defaultdict(dict)
         if self.compute_stats:
             stats = defaultdict(float)
+            
+        # Get the topic of the query
+        if filter_by_topic:
+            q_topic_index_file = h5py.File('data/toy_data/dev_queries/query_classifications.h5', 'r')
+            q_topic_index = q_topic_index_file['classifications'][()]
+            q_topic_index_trimmed = (q_topic_index >= QUERY_TOPIC_THRESHOLD) * q_topic_index
+            q_topic_index_file.close()
+
         with torch.no_grad():
             for t, batch in enumerate(tqdm(q_loader)):
                 q_id = to_list(batch["id"])[0]
@@ -207,8 +217,9 @@ class SparseRetrieval(Evaluator):
                                                                   values.cpu().numpy().astype(np.float32),
                                                                   threshold=threshold,
                                                                   size_collection=self.sparse_index.nb_docs(),
-                                                                  query_string=q_string,
-                                                                  topic_index=topic_index)
+                                                                  query_topic_score=q_topic_index_trimmed[t,:] if filter_by_topic else 0,
+                                                                  topic_index=topic_index,
+                                                                  filter_by_topic=filter_by_topic)
                 # threshold set to 0 by default, could be better
                 filtered_indexes, scores = self.select_topk(filtered_indexes, scores, k=top_k)
                 for id_, sc in zip(filtered_indexes, scores):
