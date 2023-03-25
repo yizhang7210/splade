@@ -15,8 +15,23 @@ import time
 from scipy.sparse import csr_matrix
 
 FILTER_BY_TOPIC = True
-PASSAGE_TOPIC_THRESHOLD = 0.25
-QUERY_TOPIC_THRESHOLD = 0.25
+
+FILTER_TOPICS_BY_VALUE_THRESHOLD = False
+PASSAGE_TOPIC_THRESHOLD = 0.75
+QUERY_TOPIC_THRESHOLD = 0.1
+
+FILTER_TOPICS_BY_RANKING = True
+PASSAGE_TOPIC_RANK_THRESHOLD = 4
+QUERY_TOPIC_RANK_THRESHOLD = 2
+
+def topic_set_to_int(topic_set):
+    bins = ['0' for i in range(19)]
+    for topic_i in topic_set:
+        bins[topic_i] = '1'
+
+    bin_num = '0b' + ''.join(bins)
+    return int(bin_num, 2)
+
 
 @hydra.main(config_path=CONFIG_PATH, config_name=CONFIG_NAME)
 def retrieve_evaluate(exp_dict: DictConfig):
@@ -33,13 +48,18 @@ def retrieve_evaluate(exp_dict: DictConfig):
         topic_index_file.close()
 
         for passage_i in range(topic_index.shape[0]):
-            topic_map = set()
-            for topic_i in range(topic_index.shape[1]):
-                topic_score = topic_index[passage_i, topic_i]
-                if topic_score > PASSAGE_TOPIC_THRESHOLD:
-                    topic_map.add(topic_i)
+            topic_set = set()
 
-            passage_topic_scores.append(topic_map)
+            if FILTER_TOPICS_BY_VALUE_THRESHOLD:
+                for topic_i in range(topic_index.shape[1]):
+                    topic_score = topic_index[passage_i, topic_i]
+                    if topic_score > PASSAGE_TOPIC_THRESHOLD:
+                        topic_set.add(topic_i)
+            elif FILTER_TOPICS_BY_RANKING:
+                top_topics = np.argsort(topic_index[passage_i, :])[:PASSAGE_TOPIC_RANK_THRESHOLD]
+                topic_set = set(top_topics)
+
+            passage_topic_scores.append(topic_set_to_int(topic_set))
 
         # Get the topic of the query
         q_topic_index_file = h5py.File('data/toy_data/dev_queries/query_classifications.h5', 'r')
@@ -47,13 +67,19 @@ def retrieve_evaluate(exp_dict: DictConfig):
         q_topic_index_file.close()
 
         for query_i in range(q_topic_index.shape[0]):
-            topic_map = set()
-            for topic_i in range(q_topic_index.shape[1]):
-                topic_score = q_topic_index[query_i, topic_i]
-                if topic_score > QUERY_TOPIC_THRESHOLD:
-                    topic_map.add(topic_i)
+            topic_set = set()
 
-            query_topic_scores.append(topic_map)
+            if FILTER_TOPICS_BY_VALUE_THRESHOLD:
+                for topic_i in range(q_topic_index.shape[1]):
+                    topic_score = q_topic_index[query_i, topic_i]
+                    if topic_score > QUERY_TOPIC_THRESHOLD:
+                        topic_set.add(topic_i)
+
+            elif FILTER_TOPICS_BY_RANKING:
+                top_topics = np.argsort(q_topic_index[query_i, :])[:QUERY_TOPIC_RANK_THRESHOLD]
+                topic_set = set(top_topics)
+
+            query_topic_scores.append(topic_set_to_int(topic_set))
 
     batch_size = 1
     # NOTE: batch_size is set to 1, currently no batched implem for retrieval (TODO)

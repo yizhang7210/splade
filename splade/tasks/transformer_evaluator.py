@@ -109,7 +109,7 @@ class SparseRetrieval(Evaluator):
                           query_values: np.ndarray,
                           threshold: float,
                           size_collection: int,
-                          query_topic_score: dict,
+                          query_topic_score: int,
                           passage_topic_scores: list,
                           filter_by_topic: bool):
 
@@ -214,7 +214,7 @@ class SparseRetrieval(Evaluator):
                                                                   values.cpu().numpy().astype(np.float32),
                                                                   threshold=threshold,
                                                                   size_collection=self.sparse_index.nb_docs(),
-                                                                  query_topic_score=query_topic_scores[t],
+                                                                  query_topic_score=query_topic_scores[t] if filter_by_topic else 0,
                                                                   passage_topic_scores=passage_topic_scores,
                                                                   filter_by_topic=filter_by_topic)
                 # threshold set to 0 by default, could be better
