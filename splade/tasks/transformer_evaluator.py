@@ -21,7 +21,6 @@ import pandas as pd
 MODEL = f"cardiffnlp/tweet-topic-21-multi"
 TOPIC_TOKENIZER = AutoTokenizer.from_pretrained(MODEL)
 TOPIC_MODEL = AutoModelForSequenceClassification.from_pretrained(MODEL)
-QUERY_TOPIC_THRESHOLD = 0
 
 from numpy.linalg import norm
 
@@ -110,14 +109,12 @@ class SparseRetrieval(Evaluator):
                           query_values: np.ndarray,
                           threshold: float,
                           size_collection: int,
-                          query_topic_score: np.ndarray,
-                          topic_index: np.ndarray,
+                          query_topic_score: dict,
+                          passage_topic_scores: list,
                           filter_by_topic: bool):
 
         scores = np.zeros(size_collection, dtype=np.float32)  # initialize array with size = size of collection
         n = len(indexes_to_retrieve)
-
-        irrelevant_passages = set()
 
         # indexes_to_retrieve is the BOW representation of the query
         # n is the number of words in that BOW representation
@@ -139,14 +136,16 @@ class SparseRetrieval(Evaluator):
 
                 # Consider the topic of this query + this passage
                 if filter_by_topic:
-                    if passage_id not in irrelevant_passages:
-                        topic_overlap = np.dot(topic_index[passage_id], query_topic_score)
-                        # topic_overlap = cos_sim(topic_index[passage_id], query_topic_score)
-                        if topic_overlap == 0:
-                            scores[passage_id] = 0
-                            irrelevant_passages.add(passage_id)
-                        else:
-                            scores[passage_id] += query_float * retrieved_floats[j] * topic_overlap
+                    if passage_topic_scores[passage_id] & query_topic_score:
+
+                        # Calculate the topic overlap of this passage & query.
+                        # This is the same as np.dot(topic_index[passage_id], query_topic_score)
+                        # but calculate using a sparse representation
+                        # topic_overlap = 0
+                        # for topic in query_topic_score:
+                        #     topic_overlap += query_topic_score[topic] * passage_topic_scores[topic].get(passage_id, 0)
+
+                        scores[passage_id] += query_float * retrieved_floats[j] # * topic_overlap
                 else:
                     scores[passage_id] += query_float * retrieved_floats[j]
 
@@ -184,20 +183,13 @@ class SparseRetrieval(Evaluator):
         if self.compute_stats:
             self.l0 = L0()
 
-    def retrieve(self, q_loader, top_k, name=None, return_d=False, id_dict=False, threshold=0, topic_index={}, filter_by_topic=False):
+    def retrieve(self, q_loader, top_k, name=None, return_d=False, id_dict=False, threshold=0, passage_topic_scores=[], query_topic_scores=[], filter_by_topic=False):
         makedir(self.out_dir)
         if self.compute_stats:
             makedir(os.path.join(self.out_dir, "stats"))
         res = defaultdict(dict)
         if self.compute_stats:
             stats = defaultdict(float)
-            
-        # Get the topic of the query
-        if filter_by_topic:
-            q_topic_index_file = h5py.File('data/toy_data/dev_queries/query_classifications.h5', 'r')
-            q_topic_index = q_topic_index_file['classifications'][()]
-            q_topic_index_trimmed = (q_topic_index >= QUERY_TOPIC_THRESHOLD) * q_topic_index
-            q_topic_index_file.close()
 
         with torch.no_grad():
             for t, batch in enumerate(tqdm(q_loader)):
@@ -215,20 +207,21 @@ class SparseRetrieval(Evaluator):
                 values = query[to_list(row), to_list(col)]
                 
                 # Topic classification
-                q_string = q_loader.dataset[t][1]
+                q_string = q_loader.dataset[t][1] # 'what is this car'
                 filtered_indexes, scores = self.numba_score_float(self.numba_index_doc_ids,
                                                                   self.numba_index_doc_values,
                                                                   col.cpu().numpy(),
                                                                   values.cpu().numpy().astype(np.float32),
                                                                   threshold=threshold,
                                                                   size_collection=self.sparse_index.nb_docs(),
-                                                                  query_topic_score=q_topic_index_trimmed[t,:] if filter_by_topic else 0,
-                                                                  topic_index=topic_index,
+                                                                  query_topic_score=query_topic_scores[t],
+                                                                  passage_topic_scores=passage_topic_scores,
                                                                   filter_by_topic=filter_by_topic)
                 # threshold set to 0 by default, could be better
                 filtered_indexes, scores = self.select_topk(filtered_indexes, scores, k=top_k)
                 for id_, sc in zip(filtered_indexes, scores):
                     res[str(q_id)][str(self.doc_ids[id_])] = float(sc)
+
         if self.compute_stats:
             stats = {key: value / len(q_loader) for key, value in stats.items()}
         if self.compute_stats:
