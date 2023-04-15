@@ -1,0 +1,96 @@
+START_LEVEL = 1
+MAX_DEPTH = 7
+Retrieval took 85.26199197769165 seconds
+['mrr_10', 'recall']
+MRR@10: 0.0003125
+recall ==> {'recall_5': 0.000625, 'recall_10': 0.000625, 'recall_15': 0.000625, 'recall_20': 0.000625, 'recall_30': 0.000625, 'recall_100': 0.000625, 'recall_200': 0.000625, 'recall_500': 0.000625, 'recall_1000': 0.000625}
+
+
+START_LEVEL = 2, MAX_DEPTH = 7
+Retrieval took 94.42230176925659 seconds
+['mrr_10', 'recall']
+MRR@10: 0.046300595238095266
+recall ==> {'recall_20': 0.0915625, 'recall_30': 0.0915625, 'recall_100': 0.0915625, 'recall_200': 0.0915625, 'recall_500': 0.0915625, 'recall_1000': 0.0915625, 'recall_5': 0.071875, 'recall_10': 0.0828125, 'recall_15': 0.0896875}
+
+
+START_LEVEL = 3, MAX_DEPTH = 7
+Retrieval took 93.40972805023193 seconds
+['mrr_10', 'recall']
+MRR@10: 0.0018229166666666665
+recall ==> {'recall_5': 0.0021875, 'recall_10': 0.0021875, 'recall_15': 0.0021875, 'recall_20': 0.0021875, 'recall_30': 0.0021875, 'recall_100': 0.0021875, 'recall_200': 0.0021875, 'recall_500': 0.0021875, 'recall_1000': 0.0021875}
+
+
+START_LEVEL = 4, MAX_DEPTH = 7
+Retrieval took 93.3687150478363 seconds
+['mrr_10', 'recall']
+MRR@10: 0.00020833333333333332
+recall ==> {'recall_5': 0.000625, 'recall_10': 0.000625, 'recall_15': 0.000625, 'recall_20': 0.000625, 'recall_30': 0.000625, 'recall_100': 0.000625, 'recall_200': 0.000625, 'recall_500': 0.000625, 'recall_1000': 0.000625}
+
+
+START_LEVEL = 5, MAX_DEPTH = 7
+Retrieval took 96.18964529037476 seconds
+['mrr_10', 'recall']
+MRR@10: 0.000125
+recall ==> {'recall_5': 0.000625, 'recall_10': 0.000625, 'recall_15': 0.000625, 'recall_20': 0.000625, 'recall_30': 0.000625, 'recall_100': 0.000625, 'recall_200': 0.000625, 'recall_500': 0.000625, 'recall_1000': 0.000625}
+
+
+START_LEVEL = 6, MAX_DEPTH = 7
+Retrieval took 94.15925240516663 seconds
+['mrr_10', 'recall']
+MRR@10: 0.000125
+recall ==> {'recall_5': 0.000625, 'recall_10': 0.000625, 'recall_15': 0.000625, 'recall_20': 0.000625, 'recall_30': 0.000625, 'recall_100': 0.000625, 'recall_200': 0.000625, 'recall_500': 0.000625, 'recall_1000': 0.000625}
+
+
+START_LEVEL = 7, MAX_DEPTH = 7
+Retrieval took 94.09240341186523 seconds
+['mrr_10', 'recall']
+MRR@10: 0.0008333333333333333
+recall ==> {'recall_5': 0.0015625, 'recall_10': 0.0015625, 'recall_15': 0.0015625, 'recall_20': 0.0021875, 'recall_30': 0.0021875, 'recall_100': 0.0021875, 'recall_200': 0.0021875, 'recall_500': 0.0021875, 'recall_1000': 0.0021875}
+
+
+START_LEVEL = 1
+MAX_DEPTH = 1
+Retrieval took 591.1414456367493 seconds
+['mrr_10', 'recall']
+MRR@10: 0.1682884424603173
+recall ==> {'recall_10': 0.31749999999999995, 'recall_15': 0.3564583333333334, 'recall_20': 0.3810416666666667, 'recall_30': 0.3810416666666667, 'recall_100': 0.3810416666666667, 'recall_200': 0.3810416666666667, 'recall_500': 0.3810416666666667, 'recall_1000': 0.3810416666666667, 'recall_5': 0.2465625}
+
+
+START_LEVEL = 1
+MAX_DEPTH = 2
+Retrieval took 346.04225158691406 seconds
+['mrr_10', 'recall']
+MRR@10: 0.009332093253968254
+recall ==> {'recall_10': 0.016458333333333332, 'recall_15': 0.020208333333333335, 'recall_20': 0.023645833333333335, 'recall_30': 0.023645833333333335, 'recall_100': 0.023645833333333335, 'recall_200': 0.023645833333333335, 'recall_500': 0.023645833333333335, 'recall_1000': 0.023645833333333335, 'recall_5': 0.0125}
+
+
+START_LEVEL = 1
+MAX_DEPTH = 3
+Retrieval took 211.15545511245728 seconds
+['mrr_10', 'recall']
+MRR@10: 0.0040885416666666665
+recall ==> {'recall_5': 0.006458333333333333, 'recall_10': 0.007708333333333333, 'recall_15': 0.007708333333333333, 'recall_20': 0.008333333333333333, 'recall_30': 0.008333333333333333, 'recall_100': 0.008333333333333333, 'recall_200': 0.008333333333333333, 'recall_500': 0.008333333333333333, 'recall_1000': 0.008333333333333333}
+
+
+START_LEVEL = 2
+MAX_DEPTH = 3
+Retrieval took 344.3746898174286 seconds
+['mrr_10', 'recall']
+MRR@10: 0.06967361111111112
+recall ==> {'recall_5': 0.10333333333333332, 'recall_10': 0.13114583333333335, 'recall_15': 0.14302083333333335, 'recall_20': 0.14958333333333335, 'recall_30': 0.14958333333333335, 'recall_100': 0.14958333333333335, 'recall_200': 0.14958333333333335, 'recall_500': 0.14958333333333335, 'recall_1000': 0.14958333333333335}
+
+
+START_LEVEL = 2
+MAX_DEPTH = 4
+Retrieval took 145.2865867614746 seconds
+['mrr_10', 'recall']
+MRR@10: 0.08253100198412695
+recall ==> {'recall_5': 0.12052083333333333, 'recall_10': 0.1445833333333333, 'recall_15': 0.15270833333333333, 'recall_20': 0.15552083333333333, 'recall_30': 0.15552083333333333, 'recall_100': 0.15552083333333333, 'recall_200': 0.15552083333333333, 'recall_500': 0.15552083333333333, 'recall_1000': 0.15552083333333333}
+
+
+START_LEVEL = 3
+MAX_DEPTH = 5
+Retrieval took 110.63818645477295 seconds
+['mrr_10', 'recall']
+MRR@10: 0.0027031250000000002
+recall ==> {'recall_5': 0.004375, 'recall_10': 0.0046875, 'recall_15': 0.0053125, 'recall_20': 0.0053125, 'recall_30': 0.0053125, 'recall_100': 0.0053125, 'recall_200': 0.0053125, 'recall_500': 0.0053125, 'recall_1000': 0.0053125}
