@@ -13,8 +13,6 @@ from ..indexing.inverted_index import IndexDictOfArray
 from ..losses.regularization import L0
 from ..tasks.base.evaluator import Evaluator
 from ..utils.utils import makedir, to_list
-
-# our additions
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from scipy.special import expit
 import h5py
@@ -23,28 +21,23 @@ import math
 from copy import deepcopy
 import functools
 import time
-from annoy import AnnoyIndex
 
-encoding_dim = 100
-annoy_tree = AnnoyIndex(encoding_dim, 'dot')
-# super fast, will just mmap the file
-annoy_tree.load('experiments/index-full-data/index/passages.ann')
 
-with open("experiments/index-full-data/index/passage_id_mapping_annoy.json", 'r') as pim:
-    passage_id_mapping = json.load(pim)
 
-RUN_ANNOY_TREE = True
-OUTPUT_DIM = encoding_dim
-NUMBER_OF_NEIGHBORS = 1000
-    
-    
-def condense_from_dense(dense_rep, output_dim, vocab_size=30522):
-    input_dim = vocab_size
-    zeros = np.zeros(output_dim, dtype=np.float16)
-    for k,v in dense_rep.items():
-        bucket = math.ceil((int(k) / vocab_size) * 100)
-        zeros[bucket] += v
-    return zeros
+MODEL = f"cardiffnlp/tweet-topic-21-multi"
+TOPIC_TOKENIZER = AutoTokenizer.from_pretrained(MODEL)
+TOPIC_MODEL = AutoModelForSequenceClassification.from_pretrained(MODEL)
+QUERY_TOPIC_THRESHOLD = 0
+
+from numpy.linalg import norm
+
+def cos_sim(a, b):
+    return np.dot(a, b)/(norm(a)*norm(b))
+
+
+# TREE CONSTANTS
+START_LEVEL = 3  # this is where the tree starts
+MAX_DEPTH = 4  # this is where the tree ends
 
 class SparseIndexing(Evaluator):
     """sparse indexing
@@ -140,17 +133,61 @@ class SparseRetrieval(Evaluator):
                           sorted_passage_dense,
                           sorted_passage_index_dense):
         
+#         start_time = time.time()        
+        
+        def _sparse_similarity(s1, s2):
+            s3 = {}
+            for k, v in s1.items():
+                s3[k] = s2.get(k, 0) * v
+            return sum(s3.values())
+        
+        def sparse_similarity(passage, query):
+            """
+            New Version to improve similarity
+            """
+            total = 0
+            for k, v in query.items():
+                total += passage.get(k, 0) * v
+            return total
+        
+        def get_result(query, tree, max_depth=None, start_level=0):
+            level = max(min(tree.keys()), start_level)
+            if not max_depth:
+                max_depth = len(tree.keys()) - level
+
+            index = np.argmax([sparse_similarity(x, query) for x in tree[level]])
+            
+            while (level in tree) and level <= max_depth:
+                left = tree[level][index]
+                right = tree[level][index+1]
+                go_left = sparse_similarity(left, query) > sparse_similarity(right, query)
+                index = index*2 if go_left else index*2+1
+                level+=1
+
+            final_level = level-1
+            return index, final_level
+        
         scores = np.zeros(size_collection, dtype=np.float32)  # initialize array with size = size of collection
+        #print(len(scores))
         n = len(indexes_to_retrieve)
-        # ANNOY TREE
-        # load the tree
-        # get the dense query
-#         if RUN_ANNOY_TREE:
-#             dense_query = dict(zip(indexes_to_retrieve, query_values))
-#             # create the condensed version
-#             condensed_query = condense_from_dense(dense_query, output_dim=OUTPUT_DIM)
-#             annoy_results = annoy_tree.get_nns_by_vector(condensed_query, NUMBER_OF_NEIGHBORS)
-#             annoy_results_mapped = set([passage_id_mapping[str(i)] for i in annoy_results])
+        
+        #max_depth = 3 # specify how many levels into the tree you want to go
+        
+        q = dict(zip(indexes_to_retrieve, query_values))
+        
+        # get the index and level of the tree where the result is located
+        res_index, lev = get_result(
+            q, binary_tree, 
+            max_depth=MAX_DEPTH, 
+            start_level=START_LEVEL)  
+        
+
+        bucket_size = math.ceil(len(sorted_passage_dense) / len(binary_tree[lev]))  # 
+        bucket_start = bucket_size*res_index
+        bucket_end = bucket_size*(res_index+1)
+
+        res_passages = sorted_passage_dense[bucket_start:bucket_end]
+        res_indx = np.array(sorted_passage_index_dense[bucket_start:bucket_end]).astype(int)
         
         for _idx in range(n):
 
@@ -162,16 +199,17 @@ class SparseRetrieval(Evaluator):
 
             # retrieved_indexes contains the passage IDs related to this word (local_idx)
             retrieved_indexes = inverted_index_ids[local_idx]  # get indexes from posting list
+            cond = np.in1d(retrieved_indexes, res_indx)
+            retrieved_indexes1 = retrieved_indexes[cond]
 
             # retrieved_floats contains the "relevance score" of the passage_id for this word (local_idx)
             retrieved_floats = inverted_index_floats[local_idx]  # get values from posting list
+            retrieved_floats1 = retrieved_floats[cond]
             
-            for j in numba.prange(len(retrieved_indexes)):
-                passage_id = retrieved_indexes[j]
-#                 if RUN_ANNOY_TREE and str(passage_id) not in annoy_results_mapped:
-#                     continue
-                scores[passage_id] += query_float * retrieved_floats[j]
-
+            for j in numba.prange(len(retrieved_indexes1)):                
+                passage_id = retrieved_indexes1[j]
+                scores[passage_id] += query_float * retrieved_floats1[j]
+            
         filtered_indexes = np.argwhere(scores > threshold)[:, 0]  # ideally we should have a threshold to filter
         return filtered_indexes, -scores[filtered_indexes]
     
@@ -214,6 +252,14 @@ class SparseRetrieval(Evaluator):
         res = defaultdict(dict)
         if self.compute_stats:
             stats = defaultdict(float)
+            
+        #Get the topic of the query
+        if filter_by_topic:
+            q_topic_index_file = h5py.File('data/toy_data/dev_queries/query_classifications.h5', 'r')
+            q_topic_index = q_topic_index_file['classifications'][()]
+            q_topic_index_trimmed = (q_topic_index >= QUERY_TOPIC_THRESHOLD) * q_topic_index
+            q_topic_index_file.close()
+
         with torch.no_grad():
             for t, batch in enumerate(tqdm(q_loader)):
                 q_id = to_list(batch["id"])[0]
@@ -229,15 +275,18 @@ class SparseRetrieval(Evaluator):
                 row, col = torch.nonzero(query, as_tuple=True)
                 values = query[to_list(row), to_list(col)]
                 
+                # Topic classification
+                q_string = q_loader.dataset[t][1]
+                
                 filtered_indexes, scores = self.numba_score_float(self.numba_index_doc_ids,
                                                                   self.numba_index_doc_values,
                                                                   col.cpu().numpy(),
                                                                   values.cpu().numpy().astype(np.float32),
                                                                   threshold=threshold,
                                                                   size_collection=self.sparse_index.nb_docs(),
-                                                                  query_topic_score=None,
-                                                                  topic_index=None,
-                                                                  filter_by_topic=False,
+                                                                  query_topic_score=q_topic_index_trimmed[t,:] if filter_by_topic else 0,
+                                                                  topic_index=topic_index,
+                                                                  filter_by_topic=filter_by_topic,
                                                                   binary_tree=binary_tree,
                                                                   sorted_passage_dense=sorted_passage_dense,
                                                                   sorted_passage_index_dense=sorted_passage_index_dense)

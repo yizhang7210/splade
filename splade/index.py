@@ -15,7 +15,7 @@ from .utils.utils import get_initialize_config
 
 
 INDEX_PASSAGES = False
-INDEX_QUERIES = True
+INDEX_QUERIES = False
 
 @hydra.main(config_path=CONFIG_PATH, config_name=CONFIG_NAME)
 def index(exp_dict: DictConfig):
@@ -29,7 +29,7 @@ def index(exp_dict: DictConfig):
                                     batch_size=config["index_retrieve_batch_size"],
                                     shuffle=False, num_workers=10, prefetch_factor=4)
     evaluator = SparseIndexing(model=model, config=config, compute_stats=True)
-    # evaluator.index(d_loader)
+    evaluator.index(d_loader)
     
     # Topic indexing of all the passages too
     if INDEX_PASSAGES:

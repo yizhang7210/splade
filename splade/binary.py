@@ -6,14 +6,12 @@ from .datasets.dataloaders import CollectionDataLoader
 from .datasets.datasets import CollectionDatasetPreLoad
 from .evaluate import evaluate
 from .models.models_utils import get_model
-#from .tasks.transformer_evaluator import SparseRetrieval
-from .tasks.transformer_evaluator_binary_tree import SparseRetrieval
+from .tasks.transformer_evaluator import SparseRetrieval
 from .utils.utils import get_dataset_name, get_initialize_config
 import h5py
 import numpy as np
 import pandas as pd
 import time
-import json
 
 FILTER_BY_TOPIC = True
 PASSAGE_TOPIC_THRESHOLD = 0
@@ -30,20 +28,6 @@ def retrieve_evaluate(exp_dict: DictConfig):
         topic_index = topic_index_file['classifications'][()]
         topic_index_trimmed = (topic_index >= PASSAGE_TOPIC_THRESHOLD) * topic_index
         topic_index_file.close()
-        
-    f = open("splade/tasks/binary_tree_scores.json")
-
-    binary_tree = json.load(f)
-    binary_tree = {int(key): value for key, value in binary_tree.items()}
-        
-    file = open("splade/tasks/dense_passages.json")
-
-    passages = json.load(file)
-    passage_list = list(passages.items())
-    sorted_passage_list = sorted(passage_list, key=lambda x: x[0])
-        
-    sorted_passage_dense = [v[1] for v in sorted_passage_list]
-    sorted_passage_index_dense = [v[0] for v in sorted_passage_list]
 
     batch_size = 1
     # NOTE: batch_size is set to 1, currently no batched implem for retrieval (TODO)
@@ -60,10 +44,7 @@ def retrieve_evaluate(exp_dict: DictConfig):
                            top_k=exp_dict["config"]["top_k"],
                            threshold=exp_dict["config"]["threshold"],
                            topic_index=topic_index_trimmed,
-                           filter_by_topic=FILTER_BY_TOPIC,
-                           binary_tree=binary_tree,
-                           sorted_passage_dense=sorted_passage_dense,
-                          sorted_passage_index_dense=sorted_passage_index_dense)
+                           filter_by_topic=FILTER_BY_TOPIC)
         finish = time.time()
     
         print(f"Retrieval took {finish-start} seconds")

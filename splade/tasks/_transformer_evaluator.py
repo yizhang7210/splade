@@ -14,46 +14,15 @@ from ..losses.regularization import L0
 from ..tasks.base.evaluator import Evaluator
 from ..utils.utils import makedir, to_list
 
-# our additions
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
-from scipy.special import expit
-import h5py
-import pandas as pd
-import math
-from copy import deepcopy
-import functools
-import time
-from annoy import AnnoyIndex
-
-encoding_dim = 100
-annoy_tree = AnnoyIndex(encoding_dim, 'dot')
-# super fast, will just mmap the file
-annoy_tree.load('experiments/index-full-data/index/passages.ann')
-
-with open("experiments/index-full-data/index/passage_id_mapping_annoy.json", 'r') as pim:
-    passage_id_mapping = json.load(pim)
-
-RUN_ANNOY_TREE = True
-OUTPUT_DIM = encoding_dim
-NUMBER_OF_NEIGHBORS = 1000
-    
-    
-def condense_from_dense(dense_rep, output_dim, vocab_size=30522):
-    input_dim = vocab_size
-    zeros = np.zeros(output_dim, dtype=np.float16)
-    for k,v in dense_rep.items():
-        bucket = math.ceil((int(k) / vocab_size) * 100)
-        zeros[bucket] += v
-    return zeros
 
 class SparseIndexing(Evaluator):
     """sparse indexing
     """
 
-    def __init__(self, model, config, compute_stats=False, dim_voc=None, is_query=False, **kwargs):
+    def __init__(self, model, config, compute_stats=False, dim_voc=None, is_query=False, force_new=True,**kwargs):
         super().__init__(model, config, **kwargs)
         self.index_dir = config["index_dir"] if config is not None else None
-        self.sparse_index = IndexDictOfArray(self.index_dir, dim_voc=dim_voc, force_new=True)
+        self.sparse_index = IndexDictOfArray(self.index_dir, dim_voc=dim_voc, force_new=force_new)
         self.compute_stats = compute_stats
         self.is_query = is_query
         if self.compute_stats:
@@ -81,12 +50,8 @@ class SparseIndexing(Evaluator):
                     batch_ids = [id_dict[x] for x in batch_ids]
                 count += len(batch_ids)
                 doc_ids.extend(batch_ids)
-                self.sparse_index.add_batch_document(
-                    row.cpu().
-                    numpy(), 
-                    col.cpu().numpy(), 
-                    data.cpu().numpy(),
-                    n_docs=len(batch_ids))
+                self.sparse_index.add_batch_document(row.cpu().numpy(), col.cpu().numpy(), data.cpu().numpy(),
+                                                     n_docs=len(batch_ids))
         if self.compute_stats:
             stats = {key: value / len(collection_loader) for key, value in stats.items()}
         if self.index_dir is not None:
@@ -124,58 +89,28 @@ class SparseRetrieval(Evaluator):
             scores = -scores
         return filtered_indexes, scores
 
-
     @staticmethod
-    # @numba.njit(nogil=True, parallel=True, cache=True)
+    @numba.njit(nogil=True, parallel=True, cache=True)
     def numba_score_float(inverted_index_ids: numba.typed.Dict,
                           inverted_index_floats: numba.typed.Dict,
                           indexes_to_retrieve: np.ndarray,
                           query_values: np.ndarray,
                           threshold: float,
                           size_collection: int,
-                          query_topic_score: np.ndarray,
-                          topic_index: np.ndarray,
-                          filter_by_topic: bool,
-                          binary_tree,
-                          sorted_passage_dense,
-                          sorted_passage_index_dense):
-        
+                          *args, **kwargs
+                         ):
         scores = np.zeros(size_collection, dtype=np.float32)  # initialize array with size = size of collection
         n = len(indexes_to_retrieve)
-        # ANNOY TREE
-        # load the tree
-        # get the dense query
-#         if RUN_ANNOY_TREE:
-#             dense_query = dict(zip(indexes_to_retrieve, query_values))
-#             # create the condensed version
-#             condensed_query = condense_from_dense(dense_query, output_dim=OUTPUT_DIM)
-#             annoy_results = annoy_tree.get_nns_by_vector(condensed_query, NUMBER_OF_NEIGHBORS)
-#             annoy_results_mapped = set([passage_id_mapping[str(i)] for i in annoy_results])
-        
         for _idx in range(n):
-
-            # local_idx is a word id in the vocabulary space
             local_idx = indexes_to_retrieve[_idx]  # which posting list to search
-
-            # This is the "relevance score" of the query for this word
             query_float = query_values[_idx]  # what is the value of the query for this posting list
-
-            # retrieved_indexes contains the passage IDs related to this word (local_idx)
             retrieved_indexes = inverted_index_ids[local_idx]  # get indexes from posting list
-
-            # retrieved_floats contains the "relevance score" of the passage_id for this word (local_idx)
             retrieved_floats = inverted_index_floats[local_idx]  # get values from posting list
-            
             for j in numba.prange(len(retrieved_indexes)):
-                passage_id = retrieved_indexes[j]
-#                 if RUN_ANNOY_TREE and str(passage_id) not in annoy_results_mapped:
-#                     continue
-                scores[passage_id] += query_float * retrieved_floats[j]
-
+                scores[retrieved_indexes[j]] += query_float * retrieved_floats[j]
         filtered_indexes = np.argwhere(scores > threshold)[:, 0]  # ideally we should have a threshold to filter
+        # unused documents => this should be tuned, currently it is set to 0
         return filtered_indexes, -scores[filtered_indexes]
-    
-
 
     def __init__(self, model, config, dim_voc, dataset_name=None, index_d=None, compute_stats=False, is_beir=False,
                  **kwargs):
@@ -207,7 +142,11 @@ class SparseRetrieval(Evaluator):
         if self.compute_stats:
             self.l0 = L0()
 
-    def retrieve(self, q_loader, top_k, name=None, return_d=False, id_dict=False, threshold=0, topic_index={}, filter_by_topic=False, binary_tree=None, sorted_passage_dense=None,sorted_passage_index_dense=None):
+    def retrieve(
+        self, q_loader, top_k, name=None, 
+        return_d=False, id_dict=False, threshold=0,
+        *args, **kwargs
+    ):
         makedir(self.out_dir)
         if self.compute_stats:
             makedir(os.path.join(self.out_dir, "stats"))
@@ -228,20 +167,13 @@ class SparseRetrieval(Evaluator):
                 # TODO: batched version for retrieval
                 row, col = torch.nonzero(query, as_tuple=True)
                 values = query[to_list(row), to_list(col)]
-                
                 filtered_indexes, scores = self.numba_score_float(self.numba_index_doc_ids,
                                                                   self.numba_index_doc_values,
                                                                   col.cpu().numpy(),
                                                                   values.cpu().numpy().astype(np.float32),
                                                                   threshold=threshold,
-                                                                  size_collection=self.sparse_index.nb_docs(),
-                                                                  query_topic_score=None,
-                                                                  topic_index=None,
-                                                                  filter_by_topic=False,
-                                                                  binary_tree=binary_tree,
-                                                                  sorted_passage_dense=sorted_passage_dense,
-                                                                  sorted_passage_index_dense=sorted_passage_index_dense)
-#                 threshold set to 0 by default, could be better
+                                                                  size_collection=self.sparse_index.nb_docs())
+                # threshold set to 0 by default, could be better
                 filtered_indexes, scores = self.select_topk(filtered_indexes, scores, k=top_k)
                 for id_, sc in zip(filtered_indexes, scores):
                     res[str(q_id)][str(self.doc_ids[id_])] = float(sc)
@@ -323,7 +255,7 @@ class EncodeAnserini(Evaluator):
 
 class SparseApproxEvalWrapper(Evaluator):
     """
-    wrapper for sparse indexer + r during training
+    wrapper for sparse indexer + retriever during training
     """
 
     def __init__(self, model, config, collection_loader, q_loader, **kwargs):

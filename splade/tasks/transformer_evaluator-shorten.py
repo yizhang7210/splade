@@ -13,8 +13,6 @@ from ..indexing.inverted_index import IndexDictOfArray
 from ..losses.regularization import L0
 from ..tasks.base.evaluator import Evaluator
 from ..utils.utils import makedir, to_list
-
-# our additions
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from scipy.special import expit
 import h5py
@@ -23,28 +21,24 @@ import math
 from copy import deepcopy
 import functools
 import time
-from annoy import AnnoyIndex
+from collections import defaultdict
 
-encoding_dim = 100
-annoy_tree = AnnoyIndex(encoding_dim, 'dot')
-# super fast, will just mmap the file
-annoy_tree.load('experiments/index-full-data/index/passages.ann')
 
-with open("experiments/index-full-data/index/passage_id_mapping_annoy.json", 'r') as pim:
-    passage_id_mapping = json.load(pim)
 
-RUN_ANNOY_TREE = True
-OUTPUT_DIM = encoding_dim
-NUMBER_OF_NEIGHBORS = 1000
-    
-    
-def condense_from_dense(dense_rep, output_dim, vocab_size=30522):
-    input_dim = vocab_size
-    zeros = np.zeros(output_dim, dtype=np.float16)
-    for k,v in dense_rep.items():
-        bucket = math.ceil((int(k) / vocab_size) * 100)
-        zeros[bucket] += v
-    return zeros
+MODEL = f"cardiffnlp/tweet-topic-21-multi"
+TOPIC_TOKENIZER = AutoTokenizer.from_pretrained(MODEL)
+TOPIC_MODEL = AutoModelForSequenceClassification.from_pretrained(MODEL)
+QUERY_TOPIC_THRESHOLD = 0
+
+from numpy.linalg import norm
+
+def cos_sim(a, b):
+    return np.dot(a, b)/(norm(a)*norm(b))
+
+
+# TREE CONSTANTS
+START_LEVEL = 3
+MAX_DEPTH = 5
 
 class SparseIndexing(Evaluator):
     """sparse indexing
@@ -140,41 +134,35 @@ class SparseRetrieval(Evaluator):
                           sorted_passage_dense,
                           sorted_passage_index_dense):
         
-        scores = np.zeros(size_collection, dtype=np.float32)  # initialize array with size = size of collection
-        n = len(indexes_to_retrieve)
-        # ANNOY TREE
-        # load the tree
-        # get the dense query
-#         if RUN_ANNOY_TREE:
-#             dense_query = dict(zip(indexes_to_retrieve, query_values))
-#             # create the condensed version
-#             condensed_query = condense_from_dense(dense_query, output_dim=OUTPUT_DIM)
-#             annoy_results = annoy_tree.get_nns_by_vector(condensed_query, NUMBER_OF_NEIGHBORS)
-#             annoy_results_mapped = set([passage_id_mapping[str(i)] for i in annoy_results])
+        scores = np.zeros(size_collection, dtype=np.float16)  # initialize array with size = size of collection
+        
+        sort_query_values = np.argsort(query_values)
+        query_values1 = query_values[sort_query_values][::-1]
+        indexes_to_retrieve1 = indexes_to_retrieve[sort_query_values][::-1]
+        n = len(indexes_to_retrieve1)
+        
+        denominator = 2
+        indexes_to_retrieve1 = indexes_to_retrieve1[:n//denominator]
+        query_values1 = query_values1[:n//denominator]
+        n = len(indexes_to_retrieve1)
         
         for _idx in range(n):
-
             # local_idx is a word id in the vocabulary space
-            local_idx = indexes_to_retrieve[_idx]  # which posting list to search
-
-            # This is the "relevance score" of the query for this word
-            query_float = query_values[_idx]  # what is the value of the query for this posting list
+            local_idx = indexes_to_retrieve1[_idx]  # which posting list to search
+            query_float = query_values1[_idx]  # what is the value of the query for this posting list
 
             # retrieved_indexes contains the passage IDs related to this word (local_idx)
             retrieved_indexes = inverted_index_ids[local_idx]  # get indexes from posting list
 
             # retrieved_floats contains the "relevance score" of the passage_id for this word (local_idx)
             retrieved_floats = inverted_index_floats[local_idx]  # get values from posting list
-            
-            for j in numba.prange(len(retrieved_indexes)):
-                passage_id = retrieved_indexes[j]
-#                 if RUN_ANNOY_TREE and str(passage_id) not in annoy_results_mapped:
-#                     continue
-                scores[passage_id] += query_float * retrieved_floats[j]
 
+            for j in numba.prange(len(retrieved_indexes)):                
+                passage_id = retrieved_indexes[j]
+                scores[passage_id] += query_float * retrieved_floats[j]
+        
         filtered_indexes = np.argwhere(scores > threshold)[:, 0]  # ideally we should have a threshold to filter
         return filtered_indexes, -scores[filtered_indexes]
-    
 
 
     def __init__(self, model, config, dim_voc, dataset_name=None, index_d=None, compute_stats=False, is_beir=False,
@@ -214,6 +202,14 @@ class SparseRetrieval(Evaluator):
         res = defaultdict(dict)
         if self.compute_stats:
             stats = defaultdict(float)
+            
+        #Get the topic of the query
+        if filter_by_topic:
+            q_topic_index_file = h5py.File('data/toy_data/dev_queries/query_classifications.h5', 'r')
+            q_topic_index = q_topic_index_file['classifications'][()]
+            q_topic_index_trimmed = (q_topic_index >= QUERY_TOPIC_THRESHOLD) * q_topic_index
+            q_topic_index_file.close()
+
         with torch.no_grad():
             for t, batch in enumerate(tqdm(q_loader)):
                 q_id = to_list(batch["id"])[0]
@@ -229,19 +225,22 @@ class SparseRetrieval(Evaluator):
                 row, col = torch.nonzero(query, as_tuple=True)
                 values = query[to_list(row), to_list(col)]
                 
+                # Topic classification
+                q_string = q_loader.dataset[t][1]
+                
                 filtered_indexes, scores = self.numba_score_float(self.numba_index_doc_ids,
                                                                   self.numba_index_doc_values,
                                                                   col.cpu().numpy(),
                                                                   values.cpu().numpy().astype(np.float32),
                                                                   threshold=threshold,
                                                                   size_collection=self.sparse_index.nb_docs(),
-                                                                  query_topic_score=None,
-                                                                  topic_index=None,
-                                                                  filter_by_topic=False,
+                                                                  query_topic_score=q_topic_index_trimmed[t,:] if filter_by_topic else 0,
+                                                                  topic_index=topic_index,
+                                                                  filter_by_topic=filter_by_topic,
                                                                   binary_tree=binary_tree,
                                                                   sorted_passage_dense=sorted_passage_dense,
                                                                   sorted_passage_index_dense=sorted_passage_index_dense)
-#                 threshold set to 0 by default, could be better
+                # threshold set to 0 by default, could be better
                 filtered_indexes, scores = self.select_topk(filtered_indexes, scores, k=top_k)
                 for id_, sc in zip(filtered_indexes, scores):
                     res[str(q_id)][str(self.doc_ids[id_])] = float(sc)
